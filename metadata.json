@@ -1,6 +1,6 @@
 {
   "name": "Jourwigo Mobile",
-  "description": "A high-performance mobile client for Wherigo gaming, optimized for Android devices with real-time GPS tracking and offline support.",
+  "description": "A native Android wrapper for Jourwigo, designed as a c:geo plugin for seamless Wherigo integration.",
   "requestFramePermissions": [
     "geolocation"
   ]
