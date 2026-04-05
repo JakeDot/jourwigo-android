@@ -1,0 +1,178 @@
+name: 🌙 Nightly Self-Heal
+
+on:
+  schedule:
+    # Run at 03:00 UTC every night
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (analyze only, do not open PR)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  self-heal:
+    name: Analyze, fix and improve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run TypeScript lint
+        id: ts_lint
+        run: npm run lint 2>&1 | tee /tmp/ts-lint.txt; echo "exit_code=$?" >> "$GITHUB_OUTPUT" || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 # v4.0.0
+
+      - name: Run Android lint
+        id: android_lint
+        run: ./gradlew lint 2>&1 | tee /tmp/android-lint.txt || true
+
+      - name: Run Android tests
+        id: android_tests
+        run: ./gradlew test 2>&1 | tee /tmp/android-tests.txt || true
+
+      - name: Collect diagnostics summary
+        run: |
+          echo "=== TS LINT ===" > /tmp/diagnostics.txt
+          cat /tmp/ts-lint.txt >> /tmp/diagnostics.txt
+          echo "" >> /tmp/diagnostics.txt
+          echo "=== ANDROID LINT ===" >> /tmp/diagnostics.txt
+          cat /tmp/android-lint.txt >> /tmp/diagnostics.txt
+          echo "" >> /tmp/diagnostics.txt
+          echo "=== ANDROID TESTS ===" >> /tmp/diagnostics.txt
+          cat /tmp/android-tests.txt >> /tmp/diagnostics.txt
+          wc -l /tmp/diagnostics.txt
+
+      - name: Configure git identity
+        run: |
+          git config user.name "Jourwigo Self-Heal Bot"
+          git config user.email "noreply@github.com"
+
+      - name: Get current date
+        id: date
+        run: echo "today=$(date -u +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+
+      - name: Run Self-Heal Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Jourwigo Self-Heal Agent running at ${{ steps.date.outputs.today }}.
+
+            ## Memory (read first)
+            - .github/agents/memory/wherigo-protocol.yml
+            - .github/agents/memory/android-conventions.yml
+            - .github/agents/memory/gemini-integration.yml
+            - .github/agents/memory/false-positives.yml
+
+            ## Diagnostics
+            All lint and test output is in /tmp/diagnostics.txt. Read it now.
+
+            ## Your Mission
+
+            ### Phase 1: Triage
+            Parse /tmp/diagnostics.txt and list all issues found:
+            - TypeScript errors/warnings (from "=== TS LINT ===" section)
+            - Android lint warnings/errors (from "=== ANDROID LINT ===" section)
+            - Test failures (from "=== ANDROID TESTS ===" section)
+            Write a structured triage report to /tmp/triage.json:
+            {
+              "ts_errors": [...],
+              "android_lint": [...],
+              "test_failures": [...],
+              "total_issues": N
+            }
+
+            ### Phase 2: Fix
+            If DRY_RUN is "true", skip this phase and go to Phase 3.
+
+            For each TypeScript error in src/:
+            - Attempt to fix it directly by editing the relevant file.
+            - Only fix errors you're confident about. Skip ambiguous cases.
+            - After each fix, run: npm run lint 2>&1 | grep -c "error" to verify improvement.
+
+            For each Android lint warning that is safe to auto-fix:
+            - Safe to fix: unused imports, deprecated API with clear replacement, resource issues
+            - Not safe to auto-fix: logic errors, test failures (leave for human review)
+
+            After all fixes:
+            - Run: npm run lint 2>&1 | tee /tmp/ts-lint-after.txt
+            - Run: ./gradlew lint 2>&1 | tee /tmp/android-lint-after.txt
+            - Write a fix summary to /tmp/fix-summary.txt
+
+            ### Phase 3: Create PR (if changes were made)
+            Check if there are any unstaged changes: git status --porcelain
+
+            If there are changes and DRY_RUN is "false":
+            1. Create a branch: git checkout -b nightly/self-heal-${{ steps.date.outputs.today }}
+            2. Stage changes: git add -A
+            3. Commit: git commit -m "chore: nightly AI improvements ${{ steps.date.outputs.today }}"
+            4. Push: git push origin HEAD
+            5. Open a PR:
+            ```
+            gh pr create \
+              --title "chore: nightly AI improvements ${{ steps.date.outputs.today }}" \
+              --body "## 🌙 Nightly Self-Heal Report
+
+            **Date**: $(date -u +"%Y-%m-%d %H:%M UTC")
+            **Agent**: Claude Code Self-Heal
+
+            ### Issues Found
+            $(cat /tmp/triage.json 2>/dev/null || echo "See logs")
+
+            ### Fixes Applied
+            $(cat /tmp/fix-summary.txt 2>/dev/null || echo "No fixes applied")
+
+            ### Before/After
+            - TypeScript errors before: $(grep -c "error" /tmp/ts-lint.txt 2>/dev/null || echo 0)
+            - TypeScript errors after: $(grep -c "error" /tmp/ts-lint-after.txt 2>/dev/null || echo "N/A")
+
+            > This PR was auto-generated by the Jourwigo Self-Heal Agent.
+            > Please review carefully before merging.
+
+            _Powered by Claude Code | [memory](.github/agents/memory/)_" \
+              --label "nightly-heal,automated"
+            ```
+
+            If DRY_RUN is "true":
+            Post a GitHub Actions summary instead:
+            ```
+            cat >> "$GITHUB_STEP_SUMMARY" << 'SUMMARY'
+            ## 🌙 Self-Heal Dry Run Report
+            $(cat /tmp/triage.json 2>/dev/null)
+            SUMMARY
+            ```
+
+            ### Phase 4: Update Memory
+            If you discovered a new recurring pattern or false positive during this run,
+            append it to .github/agents/memory/false-positives.yml.
+            Use git add + git commit --amend (if branch exists) or note it for next PR.

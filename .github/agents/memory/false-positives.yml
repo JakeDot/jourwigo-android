@@ -1,0 +1,40 @@
+# False Positives – Domain Memory
+# Agents: consult this before flagging a secret or security issue.
+# If a finding matches an entry here, note it as a known false positive.
+
+false_positives:
+  secrets:
+    - pattern: "MY_GEMINI_API_KEY"
+      reason: >
+        Placeholder value in .env.example. Not a real API key.
+        The literal string "MY_GEMINI_API_KEY" is intentional documentation.
+    - pattern: "MY_APP_URL"
+      reason: >
+        Placeholder value in .env.example. Not a real URL or secret.
+
+  security_findings:
+    - finding: "process.env.GEMINI_API_KEY used in constructor"
+      file: src/services/aiService.ts
+      reason: >
+        The AIService constructor reads GEMINI_API_KEY from process.env.
+        This is correct server-side usage. The key is never sent to the browser.
+        Flag only if this appears in a client-side bundle or .tsx file.
+
+    - finding: "hardcoded model name string"
+      reason: >
+        Gemini model name strings like "gemini-3-flash-preview" are not secrets.
+        They are public API identifiers.
+
+    - finding: "base64 string in test fixtures"
+      reason: >
+        Base64 encoded test data or image fixtures are not secrets.
+        Only flag base64 strings that decode to key-like patterns.
+
+  review_noise:
+    - Missing return type on React event handlers is acceptable in this codebase.
+    - any[] for Gemini history array is an acceptable type until Gemini SDK exports history types.
+    - ProGuard warnings about missing classes from third-party AAR files are expected.
+
+# Update this file when Claude or Gemini agents flag recurring false positives.
+# Format: add an entry under the appropriate section with pattern, file (optional), and reason.
+last_updated: "2026-04-05"

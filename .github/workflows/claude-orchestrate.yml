@@ -1,0 +1,446 @@
+name: 🧠 Claude Orchestrator
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master, develop]
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1: Classify changed files (fast, shell-only)
+  # ──────────────────────────────────────────────────────────────────────────
+  classify:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run_android: ${{ steps.detect.outputs.run_android }}
+      run_frontend: ${{ steps.detect.outputs.run_frontend }}
+      run_services: ${{ steps.detect.outputs.run_services }}
+      run_gradle: ${{ steps.detect.outputs.run_gradle }}
+      run_docs: ${{ steps.detect.outputs.run_docs }}
+      changed_files: ${{ steps.detect.outputs.changed_files }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed file categories
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
+          fi
+
+          echo "Changed files:"
+          echo "$FILES"
+          echo "changed_files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$FILES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Android: anything in app/ directory or Java/Kotlin files
+          if echo "$FILES" | grep -qE '^app/|\.kt$|\.java$|AndroidManifest\.xml'; then
+            echo "run_android=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_android=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Frontend: src/ directory, React/TS/CSS files
+          if echo "$FILES" | grep -qE '^src/|\.tsx?$|\.css$|vite\.config|tsconfig'; then
+            echo "run_frontend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Services: specifically the AI service layer
+          if echo "$FILES" | grep -qE '^src/services/|aiService'; then
+            echo "run_services=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_services=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Gradle/deps: build files, gradle, package.json
+          if echo "$FILES" | grep -qE '\.gradle$|gradle-wrapper|package\.json|package-lock\.json|settings\.gradle'; then
+            echo "run_gradle=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_gradle=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Docs: markdown, readme, metadata
+          if echo "$FILES" | grep -qE '\.md$|README|metadata\.json|\.txt$'; then
+            echo "run_docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_docs=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2: Android Expert Review
+  # ──────────────────────────────────────────────────────────────────────────
+  android-review:
+    name: 🤖 Android Expert
+    needs: classify
+    if: needs.classify.outputs.run_android == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/${{ github.base_ref }}...HEAD -- 'app/**' '*.gradle' 'AndroidManifest.xml' > /tmp/android-diff.txt
+          else
+            git diff HEAD~1 HEAD -- 'app/**' '*.gradle' 'AndroidManifest.xml' > /tmp/android-diff.txt
+          fi
+
+      - name: Run Android Expert Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Android Expert for Jourwigo – a native Android Wherigo geocaching plugin.
+
+            ## Memory (read first)
+            - .github/agents/memory/wherigo-protocol.yml  – Wherigo/c:geo domain knowledge
+            - .github/agents/memory/android-conventions.yml – project Android conventions
+            - .github/agents/memory/false-positives.yml – known false positives to ignore
+
+            ## Context
+            Changed files in this push:
+            ${{ needs.classify.outputs.changed_files }}
+
+            The git diff for Android files is at /tmp/android-diff.txt.
+            Read it thoroughly. Also read the affected source files in full context from the workspace.
+
+            ## Your Review Tasks
+            1. **Android Best Practices**: Check for thread violations, deprecated API usage,
+               memory leaks (Context references in static fields, unregistered listeners), etc.
+            2. **Wherigo Protocol Compliance**: Ensure c:geo plugin interface is respected.
+               Check metadata.json still declares only the `geolocation` permission.
+               Verify no new permissions were added to AndroidManifest.xml unnecessarily.
+            3. **Privacy & Location Data**: Flag any Log.d/Log.v calls that print GPS coordinates
+               or user location. Ensure location data is not persisted beyond session.
+            4. **WebView Security**: If WebView code is changed, verify:
+               - setAllowFileAccess(false)
+               - setJavaScriptEnabled only when necessary
+               - No addJavascriptInterface without @JavascriptInterface annotation
+            5. **Test Coverage**: For every new public method/class added, check if a test
+               exists in app/src/test/ or app/src/androidTest/. If not, note it.
+
+            ## Output
+            If this is a PR (${{ github.event_name == 'pull_request' && 'yes' || 'no' }}):
+            Post a structured review comment via:
+            ```
+            gh pr comment ${{ github.event.pull_request.number || '0' }} --body "<your review>"
+            ```
+
+            Format your comment as:
+            ```markdown
+            ## 🤖 Android Expert Review
+
+            ### Summary
+            <one paragraph overview>
+
+            ### 🔴 Critical Issues
+            <issues that must be fixed – or "None">
+
+            ### 🟡 Warnings
+            <things to investigate – or "None">
+
+            ### 🟢 Looks Good
+            <what was done well>
+
+            ### 🧪 Missing Tests
+            <list of new code paths without test coverage – or "None detected">
+
+            ---
+            _Review by Claude Android Expert | [memory](.github/agents/memory/)_
+            ```
+
+            Write a brief summary to /tmp/android-review-status.txt:
+            - "CRITICAL" if there are critical issues
+            - "WARNINGS" if there are only warnings
+            - "CLEAN" if all good
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 3: Frontend + Gemini Auditor
+  # ──────────────────────────────────────────────────────────────────────────
+  frontend-audit:
+    name: ⚛️ Frontend + Gemini Auditor
+    needs: classify
+    if: needs.classify.outputs.run_frontend == 'true' || needs.classify.outputs.run_services == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript lint
+        id: tslint
+        run: npm run lint 2>&1 | tee /tmp/ts-lint-output.txt || true
+
+      - name: Build diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/${{ github.base_ref }}...HEAD -- 'src/**' '*.tsx' '*.ts' '*.css' > /tmp/frontend-diff.txt
+          else
+            git diff HEAD~1 HEAD -- 'src/**' '*.tsx' '*.ts' '*.css' > /tmp/frontend-diff.txt
+          fi
+
+      - name: Run Frontend Audit Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Frontend & Gemini Integration Auditor for Jourwigo.
+
+            ## Memory (read first)
+            - .github/agents/memory/gemini-integration.yml – Gemini API patterns and security rules
+            - .github/agents/memory/false-positives.yml – known false positives
+
+            ## Context
+            Changed files: ${{ needs.classify.outputs.changed_files }}
+            Frontend diff: /tmp/frontend-diff.txt
+            TypeScript lint output: /tmp/ts-lint-output.txt
+
+            Stack: React 19, react-router-dom v7, Tailwind CSS v4, tailwind-merge + clsx,
+            motion (Framer Motion), TypeScript ~5.8, Vite 6, @google/genai SDK.
+
+            ## Your Audit Tasks
+
+            ### 🔐 Security (Gemini Integration)
+            1. Verify GEMINI_API_KEY is NEVER hardcoded. Only via process.env.GEMINI_API_KEY.
+            2. Review all prompt strings in src/services/aiService.ts for injection vectors.
+               User-supplied strings going directly into Gemini prompts without sanitization
+               are a risk. Flag but don't block on minor cases.
+            3. Check settings.enabled AND specific permission checks before every AI call.
+            4. Verify no Gemini API calls happen in browser-executed code (only server-side).
+
+            ### ⚛️ React / TypeScript Quality
+            1. React 19 patterns: check for deprecated APIs (legacy context, string refs, etc.)
+            2. react-router-dom v7: verify Route components use the v7 API (no Switch, no exact prop)
+            3. TypeScript: flag `any` type usage added in this diff. Check for missing return types
+               on exported functions.
+            4. Check for missing keys in .map() calls.
+
+            ### 🎨 Tailwind / Motion
+            1. Tailwind v4 uses CSS-first config – flag any JS tailwind.config.js usage.
+            2. Verify tailwind-merge (tm()) and clsx are used for conditional classes.
+            3. Motion animations: flag any animation without a `prefers-reduced-motion` guard
+               if it's a significant visual transition.
+
+            ### 📝 TypeScript Lint
+            Review /tmp/ts-lint-output.txt. Summarize any new errors introduced by this diff.
+
+            ## Output
+            If this is a PR (${{ github.event_name == 'pull_request' && 'yes' || 'no' }}):
+            Post via:
+            ```
+            gh pr comment ${{ github.event.pull_request.number || '0' }} --body "<your review>"
+            ```
+
+            Format:
+            ```markdown
+            ## ⚛️ Frontend & Gemini Audit
+
+            ### Summary
+            <one paragraph>
+
+            ### 🔐 Security Findings
+            <or "None">
+
+            ### ⚛️ React/TypeScript Issues
+            <or "None">
+
+            ### 🎨 Style & Animation
+            <or "None">
+
+            ### 📝 Lint Summary
+            <summary of lint output>
+
+            ---
+            _Audit by Claude Frontend Expert | [memory](.github/agents/memory/)_
+            ```
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 4: Supply Chain Security (Gradle / npm deps)
+  # ──────────────────────────────────────────────────────────────────────────
+  supply-chain:
+    name: 📦 Supply Chain Security
+    needs: classify
+    if: needs.classify.outputs.run_gradle == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build dependency diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/${{ github.base_ref }}...HEAD -- 'package.json' 'package-lock.json' '*.gradle' 'settings.gradle' > /tmp/deps-diff.txt
+          else
+            git diff HEAD~1 HEAD -- 'package.json' 'package-lock.json' '*.gradle' 'settings.gradle' > /tmp/deps-diff.txt
+          fi
+
+      - name: Run Supply Chain Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Supply Chain Security agent for Jourwigo Android.
+
+            ## Task
+            Read /tmp/deps-diff.txt – the diff of dependency files in this change.
+
+            For every NEW or UPDATED dependency (npm or Gradle), evaluate:
+            1. **Is the version pinned?** (no `*` or open ranges for production deps)
+            2. **Is this a well-known, maintained package?** Flag obscure packages with low downloads.
+            3. **Known CVEs**: Based on your training knowledge, flag any well-known vulnerabilities
+               in the specific versions added. Note: you may not have the latest CVE data.
+            4. **Gradle action hashes**: In GitHub Actions workflows, are `uses:` steps pinned
+               to commit SHAs in addition to version tags?
+            5. **License compatibility**: Flag any GPL-licensed dependencies being added to an
+               Android app (potential distribution concern).
+
+            Read the current package.json and build.gradle for full context.
+
+            If this is a PR (${{ github.event_name == 'pull_request' && 'yes' || 'no' }}):
+            Post via:
+            ```
+            gh pr comment ${{ github.event.pull_request.number || '0' }} --body "<your review>"
+            ```
+
+            Format:
+            ```markdown
+            ## 📦 Supply Chain Security Review
+
+            ### Changed Dependencies
+            <table or list of added/updated/removed deps>
+
+            ### 🔴 High Risk Findings
+            <or "None">
+
+            ### 🟡 Medium Risk Findings
+            <or "None">
+
+            ### ✅ Verdict
+            <overall assessment>
+
+            ---
+            _Review by Claude Supply Chain Agent | [memory](.github/agents/memory/)_
+            ```
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 5: Documentation Polish
+  # ──────────────────────────────────────────────────────────────────────────
+  docs-polish:
+    name: 📝 Docs Polish
+    needs: classify
+    if: needs.classify.outputs.run_docs == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build docs diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/${{ github.base_ref }}...HEAD -- '*.md' 'README*' 'metadata.json' > /tmp/docs-diff.txt
+          else
+            git diff HEAD~1 HEAD -- '*.md' 'README*' 'metadata.json' > /tmp/docs-diff.txt
+          fi
+
+      - name: Run Docs Polish Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Documentation Polish agent for Jourwigo Android.
+
+            ## Task
+            Read /tmp/docs-diff.txt – documentation changes in this PR/push.
+
+            Review for:
+            1. **Accuracy**: Does the documentation match the actual code behavior?
+               Check claims about how features work against the source files.
+            2. **Clarity**: Flag confusing sentences or missing context.
+            3. **Wherigo domain accuracy**: Verify any Wherigo/geocaching terminology is correct.
+               Read .github/agents/memory/wherigo-protocol.yml for domain reference.
+            4. **Setup instructions**: If README installation steps changed, verify they still work
+               (check package.json scripts, .env.example, etc.)
+            5. **metadata.json**: If changed, verify it still declares only necessary permissions
+               per .github/agents/memory/wherigo-protocol.yml.
+
+            If improvements are minor (typos, grammar), list them but don't block.
+            If documentation is materially wrong (wrong commands, wrong API), flag as critical.
+
+            If this is a PR (${{ github.event_name == 'pull_request' && 'yes' || 'no' }}):
+            Post via:
+            ```
+            gh pr comment ${{ github.event.pull_request.number || '0' }} --body "<your review>"
+            ```
+
+            Format:
+            ```markdown
+            ## 📝 Documentation Review
+
+            ### ✅ Accurate
+            <what's correct>
+
+            ### 🟡 Suggestions
+            <improvements>
+
+            ### 🔴 Corrections Needed
+            <factual errors – or "None">
+
+            ---
+            _Review by Claude Docs Agent | [memory](.github/agents/memory/)_
+            ```

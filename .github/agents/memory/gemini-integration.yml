@@ -1,0 +1,53 @@
+# Gemini Integration – Domain Memory
+# Agents: read this before reviewing anything in src/services/ or src/views/AIView.tsx
+
+gemini_integration:
+  entry_point: src/services/aiService.ts
+  sdk: "@google/genai"
+  api_key_env: GEMINI_API_KEY
+  api_key_pattern: "AIza[0-9A-Za-z\\-_]{35}"
+
+  models_in_use:
+    - gemini-3-flash-preview       # fast chat
+    - gemini-3.1-pro-preview       # high-thinking chat, image analysis
+    - gemini-3-pro-image-preview   # image generation
+    - veo-3.1-fast-generate-preview  # video generation
+    - gemini-2.5-flash-preview-tts  # text-to-speech
+
+  ai_settings_object:
+    location: src/services/aiService.ts
+    key_fields:
+      enabled: bool            # master switch – must be checked before any API call
+      permissions.chat: bool
+      permissions.imageGen: bool
+      permissions.mapsGrounding: bool
+      permissions.imageAnalysis: bool
+      permissions.audioSpeech: bool
+      permissions.highThinking: bool
+
+  security_rules:
+    - GEMINI_API_KEY must NEVER appear hardcoded in source. Only via process.env.
+    - The .env.example placeholder value is "MY_GEMINI_API_KEY" – any real key pattern is a leak.
+    - All AI methods must check settings.enabled AND the specific permission before proceeding.
+    - Prompt strings that include user-supplied input must be inspected for injection vectors.
+    - No API calls from client-side browser context – all Gemini calls must go through the server.
+
+  prompt_injection_risk_areas:
+    - aiService.chat() – message param is user-supplied
+    - aiService.generateImage() – prompt param is user-supplied
+    - aiService.generateVideo() – prompt param is user-supplied
+    - aiService.analyzeImage() – prompt param is user-supplied
+
+  known_patterns:
+    - history array in chat() is passed directly to Gemini; validate role field values.
+    - Video generation uses a polling loop; ensure timeout to prevent infinite wait.
+    - TTS returns raw base64 audio data; ensure it is handled client-side only.
+
+  env_file_rules:
+    tracked_example: .env.example
+    blocked_files:
+      - .env
+      - .env.local
+      - .env.production
+    gitignore_pattern: ".env*"
+    gitignore_exception: "!.env.example"

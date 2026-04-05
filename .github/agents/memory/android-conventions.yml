@@ -1,0 +1,54 @@
+# Android Conventions – Domain Memory
+# Agents: read this before reviewing anything in app/
+
+android_project:
+  structure:
+    app_src: app/src/main/java/com/
+    manifest: app/src/main/AndroidManifest.xml
+    resources: app/src/main/res/
+    build_file: app/build.gradle
+    proguard: app/proguard-rules.pro
+
+  build_config:
+    gradle_wrapper: 8.2.2
+    android_gradle_plugin: 8.2.2
+    java_version: 17  # set up via actions/setup-java in CI
+    distribution: temurin
+
+  conventions:
+    - Prefer Kotlin for new code; legacy Java files may exist in app/src/main/java/
+    - Use ViewBinding over findViewById
+    - Avoid using deprecated APIs without a fallback
+    - All network calls should be async (coroutines or RxJava)
+    - Never perform disk I/O or network calls on the main thread
+
+  logging_rules:
+    - Log.d() and Log.v() are acceptable in debug builds only
+    - Production builds must strip verbose logs via ProGuard/R8
+    - Log.d() must NEVER print: GPS coordinates, user tokens, API keys, cartridge solve states
+    - Recommended: use BuildConfig.DEBUG guard around verbose logs
+
+  permissions:
+    required_by_wherigo:
+      - android.permission.ACCESS_FINE_LOCATION
+      - android.permission.ACCESS_COARSE_LOCATION
+    optional:
+      - android.permission.CAMERA  # for QR cartridge loading
+      - android.permission.INTERNET  # for online cartridge fetch
+    never_request:
+      - READ_CONTACTS
+      - READ_CALL_LOG
+
+  testing:
+    unit_tests: app/src/test/
+    instrumented_tests: app/src/androidTest/
+    preferred_frameworks:
+      - JUnit4
+      - Espresso (UI)
+      - Mockito (mocking)
+
+  ci:
+    build_command: "./gradlew build"
+    lint_command: "./gradlew lint"
+    test_command: "./gradlew test"
+    publish_command: "./gradlew publish"

@@ -1,0 +1,163 @@
+name: 🎫 Issue Triage Daemon
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  triage:
+    name: Triage and label issue
+    runs-on: ubuntu-latest
+    # Only triage on new issues and comments from external contributors (not bots)
+    if: |
+      github.event_name == 'issues' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.login != 'github-actions[bot]' &&
+       github.event.comment.user.login != 'dependabot[bot]')
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect issue context
+        id: context
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_LABELS: ${{ toJson(github.event.issue.labels.*.name) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          echo "issue_number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
+          # Write body to file safely via env variable (never interpolated into shell)
+          printf '%s' "${ISSUE_BODY}" > /tmp/issue-body.txt
+          # Build meta JSON safely using jq to avoid injection via title/author
+          jq -n \
+            --argjson number "${ISSUE_NUMBER}" \
+            --arg title "${ISSUE_TITLE}" \
+            --arg author "${ISSUE_AUTHOR}" \
+            --arg event "${EVENT_NAME}" \
+            --argjson labels "${ISSUE_LABELS}" \
+            '{number: $number, title: $title, author: $author, event: $event, labels: $labels}' \
+            > /tmp/issue-meta.json
+
+      - name: Run Triage Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Jourwigo Issue Triage Daemon.
+
+            ## Memory (read first)
+            - .github/agents/memory/wherigo-protocol.yml – domain context
+            - .github/agents/memory/gemini-integration.yml – AI feature context
+            - .github/agents/memory/android-conventions.yml – Android context
+
+            ## Issue Details
+            Read /tmp/issue-meta.json for issue metadata.
+            Read /tmp/issue-body.txt for the full issue description.
+            Event type: ${{ github.event_name }}
+
+            ## Your Tasks
+
+            ### 1. Classify the Issue
+            Determine the issue type:
+            - **bug**: Something is broken or crashes
+            - **enhancement**: New feature request
+            - **question**: User asking how to use something
+            - **documentation**: Docs improvement needed
+            - **performance**: Slowness or battery/memory concern
+
+            Determine the area:
+            - **android**: Android app, native code, WebView, c:geo plugin
+            - **frontend**: React UI, TypeScript, CSS
+            - **gemini-integration**: AI features, Gemini API calls
+            - **wherigo-protocol**: Cartridge loading, zone navigation, Wherigo spec
+            - **ci-cd**: GitHub Actions, build system
+            - **dependencies**: Package versions, security
+
+            ### 2. Apply Labels
+            Apply appropriate labels via gh CLI. Use only existing labels if possible.
+            First check existing labels: gh label list --repo ${{ github.repository }}
+
+            Apply labels:
+            ```
+            gh issue edit ${{ github.event.issue.number }} --add-label "<label1>,<label2>"
+            ```
+
+            Common label names to try: bug, enhancement, question, documentation,
+            android, frontend, gemini-integration, wherigo-protocol, good first issue
+
+            ### 3. Post Triage Comment
+
+            For a **bug report**:
+            ```
+            gh issue comment ${{ github.event.issue.number }} --body "## 🤖 Triage Report
+
+            **Type**: Bug 🐛
+            **Area**: <area>
+
+            ### Relevant Code
+            Based on the description, the relevant code areas are:
+            <list specific files/functions from the codebase that relate to this bug>
+
+            ### Reproduction Checklist
+            To help us reproduce this issue, please confirm:
+            - [ ] Android version and device model
+            - [ ] Jourwigo app version
+            - [ ] Cartridge name/ID (if applicable)
+            - [ ] Steps to reproduce
+            - [ ] Expected vs actual behavior
+
+            ### Possible Causes
+            <brief analysis based on reading the relevant source files>
+
+            ---
+            _Triaged by Claude Triage Daemon | [Jourwigo](https://github.com/JakeDot/jourwigo-android)_"
+            ```
+
+            For an **enhancement request**:
+            ```
+            gh issue comment ${{ github.event.issue.number }} --body "## 🤖 Triage Report
+
+            **Type**: Enhancement ✨
+            **Area**: <area>
+            **Complexity**: <Low/Medium/High> (estimate)
+
+            ### Related Files
+            <list files that would need to change to implement this>
+
+            ### Implementation Notes
+            <brief technical approach based on current codebase>
+
+            ### Questions for Clarification
+            <any questions needed before implementation can begin – or "None, requirements are clear">
+
+            ---
+            _Triaged by Claude Triage Daemon | [Jourwigo](https://github.com/JakeDot/jourwigo-android)_"
+            ```
+
+            For a **question**:
+            ```
+            gh issue comment ${{ github.event.issue.number }} --body "## 🤖 Response
+
+            <answer the question based on reading the relevant source files and README>
+
+            ---
+            _Answered by Claude Triage Daemon | [Jourwigo](https://github.com/JakeDot/jourwigo-android)_"
+            ```
+
+            ### 4. Good First Issue Detection
+            If this is a bug or enhancement that seems straightforward to fix
+            (small scope, well-understood area), add the "good first issue" label:
+            ```
+            gh issue edit ${{ github.event.issue.number }} --add-label "good first issue"
+            ```
