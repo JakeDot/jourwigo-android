@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'kotlin-android'
 }
 
 android {
@@ -22,15 +23,37 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        // Java 17 — records, sealed, text blocks, pattern-matching instanceof, switch expressions
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
     }
 }
 
 dependencies {
+    // Core library desugaring lets Java 17 features reach minSdk 24
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.webkit:webkit:1.9.0'
+
+    // Kotlin
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+
+    // Lua interpreter
+    implementation 'org.luaj:luaj-jse:3.0.1'
+
+    // Shizuku privileged-shell bridge
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
 }

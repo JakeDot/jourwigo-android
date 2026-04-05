@@ -1,3 +1,25 @@
 <resources>
     <string name="app_name">Jourwigo Mobile</string>
+
+    <!-- Shell activity -->
+    <string name="shell_title">Shell</string>
+    <string name="fab_shell_desc">Open shell</string>
+
+    <!-- Tab labels -->
+    <string name="tab_javascript">JS</string>
+    <string name="tab_lua">Lua</string>
+    <string name="tab_termux">Termux</string>
+    <string name="tab_shizuku">Shizuku</string>
+
+    <!-- Input hints -->
+    <string name="hint_js">// JavaScript — injected into the live WebView\nconsole.log(document.title);</string>
+    <string name="hint_lua">-- Lua — runs in LuaJ (stateful REPL)\nprint("hello from Lua")</string>
+    <string name="hint_termux">ls -la ~</string>
+    <string name="hint_shizuku">dumpsys battery</string>
+
+    <!-- Buttons -->
+    <string name="btn_run">▶ Run</string>
+    <string name="btn_send_termux">▶ Send to Termux</string>
+    <string name="btn_request_shizuku">Request permission</string>
+    <string name="btn_clear">Clear output</string>
 </resources>
