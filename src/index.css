@@ -3,25 +3,63 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   
-  --color-android-primary: #6750A4;
-  --color-android-on-primary: #FFFFFF;
-  --color-android-primary-container: #EADDFF;
-  --color-android-on-primary-container: #21005D;
+  --color-android-primary: var(--theme-primary);
+  --color-android-on-primary: var(--theme-on-primary);
+  --color-android-primary-container: var(--theme-primary-container);
+  --color-android-on-primary-container: var(--theme-on-primary-container);
   
-  --color-android-secondary: #625B71;
-  --color-android-on-secondary: #FFFFFF;
-  --color-android-secondary-container: #E8DEF8;
-  --color-android-on-secondary-container: #1D192B;
+  --color-android-secondary: var(--theme-secondary);
+  --color-android-on-secondary: var(--theme-on-secondary);
+  --color-android-secondary-container: var(--theme-secondary-container);
+  --color-android-on-secondary-container: var(--theme-on-secondary-container);
   
-  --color-android-surface: #FEF7FF;
-  --color-android-on-surface: #1D1B20;
-  --color-android-surface-variant: #E7E0EC;
-  --color-android-on-surface-variant: #49454F;
+  --color-android-surface: var(--theme-surface);
+  --color-android-on-surface: var(--theme-on-surface);
+  --color-android-surface-variant: var(--theme-surface-variant);
+  --color-android-on-surface-variant: var(--theme-on-surface-variant);
   
-  --color-android-outline: #79747E;
+  --color-android-outline: var(--theme-outline);
 }
 
 @layer base {
+  :root {
+    --theme-primary: #6750A4;
+    --theme-on-primary: #FFFFFF;
+    --theme-primary-container: #EADDFF;
+    --theme-on-primary-container: #21005D;
+    
+    --theme-secondary: #625B71;
+    --theme-on-secondary: #FFFFFF;
+    --theme-secondary-container: #E8DEF8;
+    --theme-on-secondary-container: #1D192B;
+    
+    --theme-surface: #FEF7FF;
+    --theme-on-surface: #1D1B20;
+    --theme-surface-variant: #E7E0EC;
+    --theme-on-surface-variant: #49454F;
+    
+    --theme-outline: #79747E;
+  }
+
+  .theme-high-contrast {
+    --theme-primary: #FFFF00;
+    --theme-on-primary: #000000;
+    --theme-primary-container: #333300;
+    --theme-on-primary-container: #FFFF00;
+    
+    --theme-secondary: #FFCC00;
+    --theme-on-secondary: #000000;
+    --theme-secondary-container: #443300;
+    --theme-on-secondary-container: #FFCC00;
+    
+    --theme-surface: #000000;
+    --theme-on-surface: #FFFF00;
+    --theme-surface-variant: #1A1A00;
+    --theme-on-surface-variant: #FFFF00;
+    
+    --theme-outline: #FFFF00;
+  }
+
   * {
     @apply border-android-outline/20;
     -webkit-tap-highlight-color: transparent;
@@ -40,6 +78,11 @@
   box-shadow: 0px 4px 8px 3px rgba(0, 0, 0, 0.15), 0px 1px 3px 0px rgba(0, 0, 0, 0.30);
 }
 
+.theme-high-contrast .android-shadow,
+.theme-high-contrast .android-shadow-lg {
+  box-shadow: 0px 1px 3px 1px rgba(255, 255, 0, 0.3), 0px 1px 2px 0px rgba(255, 255, 0, 0.50);
+}
+
 /* Hide scrollbars but keep functionality */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
@@ -47,4 +90,10 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Map Grid Pattern */
+.bg-grid-pattern {
+  background-image: radial-gradient(var(--theme-outline) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
