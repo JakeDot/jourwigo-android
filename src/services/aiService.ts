@@ -15,7 +15,7 @@ export interface AISettings {
 export const DEFAULT_AI_SETTINGS: AISettings = {
   enabled: false,
   permissions: {
-    chat: true,
+    chat: false,
     imageGen: false,
     mapsGrounding: false,
     imageAnalysis: false,
