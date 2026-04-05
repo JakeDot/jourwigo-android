@@ -1,0 +1,325 @@
+name: 🔮 Gemini↔Claude Oracle
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: number
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1: Claude Review Pass
+  # ──────────────────────────────────────────────────────────────────────────
+  claude-review:
+    name: 🤖 Claude Review Pass
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      review_file: /tmp/claude-review.md
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build full diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/${{ github.base_ref }}...HEAD > /tmp/full-diff.txt
+          else
+            git diff HEAD~1 HEAD > /tmp/full-diff.txt
+          fi
+
+      - name: Claude first-pass review
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are conducting the FIRST PASS review for the Jourwigo Gemini↔Claude Oracle.
+
+            ## Memory (read first)
+            - .github/agents/memory/wherigo-protocol.yml
+            - .github/agents/memory/gemini-integration.yml
+            - .github/agents/memory/android-conventions.yml
+            - .github/agents/memory/false-positives.yml
+
+            ## Task
+            Read /tmp/full-diff.txt and conduct a comprehensive code review.
+
+            Review every aspect:
+            - Security (secrets, injection, permissions)
+            - Correctness (logic bugs, edge cases)
+            - Performance (unnecessary re-renders, blocking calls, memory leaks)
+            - Wherigo domain correctness
+            - Test coverage
+
+            Write your findings to /tmp/claude-review.md in this EXACT format
+            (use these exact section headers so the synthesis agent can parse them):
+
+            ```markdown
+            # Claude Code Review
+
+            ## CRITICAL_ISSUES
+            <!-- List each as: ITEM: <description> | FILE: <file> | LINE: <line or range> -->
+
+            ## WARNINGS
+            <!-- List each as: ITEM: <description> | FILE: <file> -->
+
+            ## POSITIVE_OBSERVATIONS
+            <!-- List each as: ITEM: <description> -->
+
+            ## CONFIDENCE_SCORE
+            <!-- Single number 0-100 representing your confidence in this review -->
+            ```
+
+            IMPORTANT: Do NOT post a PR comment in this job. Only write to /tmp/claude-review.md.
+            The synthesis job will post the final combined comment.
+
+      - name: Upload Claude review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review
+          path: /tmp/claude-review.md
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2: Gemini Review Pass
+  # ──────────────────────────────────────────────────────────────────────────
+  gemini-review:
+    name: ✨ Gemini Review Pass
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      review_file: /tmp/gemini-review.md
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build full diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/${{ github.base_ref }}...HEAD > /tmp/full-diff.txt
+          else
+            git diff HEAD~1 HEAD > /tmp/full-diff.txt
+          fi
+
+      - name: Run Gemini review via Node script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          node - << 'NODESCRIPT'
+          const { GoogleGenAI } = require("@google/genai");
+          const fs = require("fs");
+
+          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+          async function main() {
+            const diff = fs.readFileSync("/tmp/full-diff.txt", "utf8");
+
+            // Read memory files for context
+            let memory = "";
+            const memoryFiles = [
+              ".github/agents/memory/gemini-integration.yml",
+              ".github/agents/memory/wherigo-protocol.yml",
+              ".github/agents/memory/false-positives.yml",
+            ];
+            for (const f of memoryFiles) {
+              try {
+                memory += `\n\n## ${f}\n${fs.readFileSync(f, "utf8")}`;
+              } catch {}
+            }
+
+            const prompt = `You are conducting a code review for the Jourwigo Android project.
+          This is a Wherigo geocaching app with a React/TypeScript frontend and Android native layer.
+
+          ## Domain Memory
+          ${memory}
+
+          ## Code Diff to Review
+          \`\`\`diff
+          ${diff.slice(0, 50000)}
+          \`\`\`
+
+          Conduct a comprehensive review focusing on:
+          - Correctness and logic bugs
+          - Security issues (especially around Gemini API key handling and prompt injection)
+          - Performance concerns
+          - Wherigo/geocaching domain correctness
+          - React/TypeScript best practices
+
+          Respond in EXACTLY this format (use these exact section headers):
+
+          # Gemini Code Review
+
+          ## CRITICAL_ISSUES
+          <!-- List each as: ITEM: <description> | FILE: <file> | LINE: <line or range> -->
+
+          ## WARNINGS
+          <!-- List each as: ITEM: <description> | FILE: <file> -->
+
+          ## POSITIVE_OBSERVATIONS
+          <!-- List each as: ITEM: <description> -->
+
+          ## CONFIDENCE_SCORE
+          <!-- Single number 0-100 -->`;
+
+            try {
+              const response = await ai.models.generateContent({
+                model: "gemini-2.5-pro",
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+              });
+              fs.writeFileSync("/tmp/gemini-review.md", response.text || "# Gemini Code Review\n\n## CRITICAL_ISSUES\n\n## WARNINGS\n\n## POSITIVE_OBSERVATIONS\n\n## CONFIDENCE_SCORE\n50");
+              console.log("Gemini review written.");
+            } catch (err) {
+              console.error("Gemini review failed:", err.message);
+              fs.writeFileSync("/tmp/gemini-review.md", `# Gemini Code Review\n\n_Review failed: ${err.message}_\n\n## CRITICAL_ISSUES\n\n## WARNINGS\n\n## POSITIVE_OBSERVATIONS\n\n## CONFIDENCE_SCORE\n0`);
+            }
+          }
+
+          main();
+          NODESCRIPT
+
+      - name: Upload Gemini review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemini-review
+          path: /tmp/gemini-review.md
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 3: Meta-Synthesis – Claude reads both reviews and posts final verdict
+  # ──────────────────────────────────────────────────────────────────────────
+  oracle-synthesis:
+    name: 🔮 Oracle Synthesis
+    needs: [claude-review, gemini-review]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download both review artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/reviews/
+
+      - name: Locate review files
+        run: |
+          find /tmp/reviews/ -name "*.md" -exec echo {} \; -exec wc -l {} \;
+          cp /tmp/reviews/claude-review/claude-review.md /tmp/claude-review.md 2>/dev/null || echo "# Claude Code Review\n\n_Not available_" > /tmp/claude-review.md
+          cp /tmp/reviews/gemini-review/gemini-review.md /tmp/gemini-review.md 2>/dev/null || echo "# Gemini Code Review\n\n_Not available_" > /tmp/gemini-review.md
+
+      - name: Run Oracle Synthesis Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Oracle – the synthesis meta-agent for Jourwigo's multi-model review system.
+
+            You have received two independent code reviews of the same PR:
+            - Claude's review: /tmp/claude-review.md
+            - Gemini's review: /tmp/gemini-review.md
+
+            Read both reviews carefully.
+
+            ## Your Synthesis Tasks
+
+            ### 1. Find Agreements
+            Issues flagged by BOTH Claude and Gemini are high-confidence findings.
+            List them under "## ✅ Agreed Findings".
+
+            ### 2. Find Disputes
+            Issues flagged by ONE reviewer but NOT the other are disputed.
+            These deserve human attention – they may be false positives OR one model missed something.
+            List them under "## ⚡ Disputed Findings".
+
+            ### 3. Exclusive Findings
+            Issues only Claude found → "## 🤖 Claude-Only Findings"
+            Issues only Gemini found → "## ✨ Gemini-Only Findings"
+
+            ### 4. Positive Observations (combined)
+            Merge positive observations from both reviews.
+
+            ### 5. Verdict
+            Based on the combined analysis:
+            - **APPROVE**: No critical issues, only minor warnings
+            - **REQUEST_CHANGES**: Critical issues found (agreed or high-confidence)
+            - **COMMENT**: Warnings/suggestions only
+
+            ### 6. Post the Oracle comment to the PR
+            ```
+            gh pr comment ${{ github.event.pull_request.number || github.event.inputs.pr_number }} \
+              --body "## 🔮 Oracle Review (Claude × Gemini)
+
+            > _Two AI models reviewed this PR independently. Agreements are high-confidence; disputes need human judgment._
+
+            ### Verdict: <APPROVE / REQUEST_CHANGES / COMMENT>
+
+            ---
+
+            ## ✅ Agreed Findings
+            _(Both Claude and Gemini flagged these – high confidence)_
+
+            <agreed critical issues and warnings>
+
+            ---
+
+            ## ⚡ Disputed Findings
+            _(One model flagged, one didn't – needs human judgment)_
+
+            | Finding | Claude | Gemini |
+            |---------|--------|--------|
+            | <issue> | 🚩 Flagged | ✅ No issue |
+
+            ---
+
+            ## 🤖 Claude-Only Findings
+            <issues only Claude raised>
+
+            ## ✨ Gemini-Only Findings
+            <issues only Gemini raised>
+
+            ---
+
+            ## 🌟 Positive Observations
+            <combined positives>
+
+            ---
+
+            | Metric | Claude | Gemini |
+            |--------|--------|--------|
+            | Confidence Score | <score>/100 | <score>/100 |
+            | Critical Issues | <N> | <N> |
+            | Warnings | <N> | <N> |
+
+            ---
+            _Oracle synthesis by Claude Code | Gemini review by Gemini 2.5 Pro | [memory](.github/agents/memory/)_"
+            ```
+
+            ### 7. Update memory with new patterns
+            If this synthesis revealed a new recurring pattern (something both models agree on
+            that isn't already in the memory files), append it to the appropriate memory file.

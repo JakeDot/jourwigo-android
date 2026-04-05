@@ -1,0 +1,46 @@
+# Wherigo Protocol – Domain Memory
+# Agents: read this at the start of every review session.
+# Never commit secrets here. This file is static domain knowledge.
+
+project:
+  name: Jourwigo
+  type: Android native app + React/TypeScript PWA
+  purpose: Wherigo cartridge player, designed as a c:geo plugin
+  repo: JakeDot/jourwigo-android
+
+wherigo_protocol:
+  description: >
+    Wherigo is a geocaching game framework by Groundspeak/Lacuna.
+    Cartridges are Lua scripts defining zones, tasks, and items.
+    The c:geo Android app (open-source geocaching client) supports plugin
+    integrations that can launch external apps and exchange data.
+  cgeo_plugin_interface:
+    manifest_key: metadata.json
+    required_permissions:
+      - geolocation  # declared in metadata.json requestFramePermissions
+    data_exchange: >
+      c:geo passes coordinates and cartridge metadata to the plugin.
+      The plugin must NOT persist raw GPS coordinates beyond the session.
+      All location data should be treated as PII.
+  cartridge_format:
+    extension: .gwc  # compiled Wherigo cartridge
+    engine: OpenWIG / libwherig
+  known_gotchas:
+    - Log.d() calls that print lat/lon are a privacy risk in production builds.
+    - Location accuracy should never be higher than needed for gameplay.
+    - Cartridge Lua engine errors should be caught and not crash the host activity.
+
+android_specifics:
+  min_sdk: 21  # inferred from project conventions
+  target_sdk: 34
+  build_tools: AGP 8.2.2 / Gradle 8.2.2
+  language: Java (legacy) and Kotlin
+  webview_integration: >
+    The React PWA frontend may be loaded inside a WebView.
+    Ensure WebView settings disable file:// access and javascript injection
+    from untrusted sources.
+
+privacy_rules:
+  - Never log raw GPS coordinates at Log.d/Log.v level in production code.
+  - Location permission must be fine-grained (ACCESS_FINE_LOCATION only when needed).
+  - Cartridge progress data should not be sent to external servers without user consent.

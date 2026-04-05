@@ -1,0 +1,146 @@
+name: 📣 Release Intelligence
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to generate notes for (e.g. v1.2.0)'
+        required: true
+        type: string
+
+jobs:
+  release-notes:
+    name: Generate intelligent release notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gather commits since last tag
+        run: |
+          CURRENT_TAG="${{ steps.tag.outputs.tag }}"
+          # Get previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -1)
+          echo "Generating notes from $PREV_TAG to $CURRENT_TAG"
+
+          if [ -n "$PREV_TAG" ]; then
+            git log "${PREV_TAG}..HEAD" --oneline --no-merges > /tmp/commits.txt
+            git log "${PREV_TAG}..HEAD" --format="%H|%s|%an|%ad" --date=short --no-merges > /tmp/commits-full.txt
+          else
+            git log HEAD --oneline --no-merges -50 > /tmp/commits.txt
+            git log HEAD --format="%H|%s|%an|%ad" --date=short --no-merges -50 > /tmp/commits-full.txt
+          fi
+
+          echo "PREV_TAG=$PREV_TAG" >> "$GITHUB_ENV"
+          echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_ENV"
+          wc -l /tmp/commits.txt
+
+      - name: Gather changed files summary
+        run: |
+          PREV_TAG="${PREV_TAG}"
+          if [ -n "$PREV_TAG" ]; then
+            git diff "${PREV_TAG}..HEAD" --stat > /tmp/changed-stats.txt
+          else
+            git diff HEAD~10..HEAD --stat > /tmp/changed-stats.txt
+          fi
+
+      - name: Run Release Intelligence Claude Agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ steps.tag.outputs.tag }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are the Release Intelligence Agent for Jourwigo Android.
+
+            ## Memory (read first)
+            - .github/agents/memory/wherigo-protocol.yml – domain context for meaningful descriptions
+            - .github/agents/memory/gemini-integration.yml – AI feature context
+
+            ## Input Data
+            - Commits: /tmp/commits-full.txt (format: SHA|subject|author|date)
+            - File change stats: /tmp/changed-stats.txt
+            - Release tag: $CURRENT_TAG
+            - Previous tag: $PREV_TAG (may be empty for first release)
+
+            ## Your Tasks
+
+            ### 1. Classify Commits
+            Read /tmp/commits-full.txt and categorize each commit:
+            - **Android Runtime**: Changes to app/, AndroidManifest.xml, *.gradle
+            - **Gemini AI Integration**: Changes to src/services/, AIView, AI settings
+            - **UI/Frontend**: Changes to src/views/, src/components/, styles
+            - **Wherigo Engine**: Changes to Wherigo/cartridge/plugin logic
+            - **Dependencies**: package.json, *.gradle dependency changes
+            - **Docs/Meta**: README, metadata.json, comments
+            - **Infrastructure**: CI/CD, GitHub Actions workflows
+            - **Bug Fixes**: commits starting with fix:, bug:, or containing "fix", "bug", "crash"
+
+            ### 2. Generate Rich Release Notes
+            Write to /tmp/release-notes.md:
+
+            ```markdown
+            ## What's New in $CURRENT_TAG
+
+            <!-- One-sentence release summary here -->
+
+            ### 🗺️ Wherigo & Geocaching
+            <!-- Android runtime and Wherigo protocol changes -->
+
+            ### 🤖 AI Features
+            <!-- Gemini integration improvements -->
+
+            ### 🎨 Interface
+            <!-- UI and frontend changes -->
+
+            ### 🔧 Under the Hood
+            <!-- Technical improvements, deps, refactoring -->
+
+            ### 🐛 Bug Fixes
+            <!-- Bug fixes -->
+
+            ### 📝 Documentation
+            <!-- Doc changes -->
+
+            ---
+            **Full Changelog**: $PREV_TAG...$CURRENT_TAG
+            ```
+
+            Use Wherigo domain knowledge to make descriptions meaningful:
+            - Instead of "Updated cartridge loader" → "Improved cartridge loading reliability for offline .gwc files"
+            - Instead of "Fix crash" → "Fixed crash when loading cartridges without zone definitions"
+
+            ### 3. Generate Announcement Tweet
+            Write a tweet-length (≤280 chars) announcement to /tmp/tweet.txt.
+            Include the version, one key feature, and #Wherigo #Geocaching hashtags.
+
+            ### 4. Update GitHub Release
+            If the release exists, update its body via:
+            ```
+            gh release edit "$CURRENT_TAG" --notes "$(cat /tmp/release-notes.md)"
+            ```
+
+            ### 5. Print tweet to Actions summary
+            ```
+            echo "## 📣 Announcement" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/tweet.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            ```
