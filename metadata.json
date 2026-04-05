@@ -1,0 +1,7 @@
+{
+  "name": "Jourwigo Mobile",
+  "description": "A high-performance mobile client for Wherigo gaming, optimized for Android devices with real-time GPS tracking and offline support.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

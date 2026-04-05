@@ -1,0 +1,23 @@
+{
+  "short_name": "Jourwigo",
+  "name": "Jourwigo Mobile Client",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/jourwigo-icon/192/192",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://picsum.photos/seed/jourwigo-icon/512/512",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#6750A4",
+  "background_color": "#FEF7FF",
+  "orientation": "portrait"
+}
